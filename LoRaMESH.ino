@@ -2,8 +2,9 @@
 /*
  
  Radioenge Equip. de Telecom.
- Abril de 2020
+ Junho de 2020 
  Código exemplo para uso dos módulos LoRaMESH com o ESP8266 + ThingSpeak
+ rev.01- - Exemplo envio de string com um comando de aplicação (cmd >12 e <128)
  
  Fontes consultadas:
 https://circuits4you.com/2018/01/02/esp8266-timer-ticker-example/ 08-04-2020
@@ -36,7 +37,8 @@ int count = 0;
 char inData[255]; // Buffer com tamanho suficiente para receber qualquer mensagem
 char inChar=-1; // char para receber um caractere lido
 byte indice = 0; // índice para percorrer o vetor de char = Buffer
-int listaEndDevices[5] = {1,2,1,2,1};//pode aumentar o tamanho do array e incluir um novo ID. coloquei 1,2,1,2,1 ... porque no teste só temos os IDs 1 e 2 ... em uma rede maior ... deve-se cololcar os IDs existentes 1,2,3,50,517, 714,... qualquer inteiro de 1 até 1023.
+int listaEndDevices[5] = {1,2,1,2,2047};//pode aumentar o tamanho do array e incluir um novo ID. coloquei 1,2,1,2,1 ... porque no teste só temos os IDs 1 e 2 ... em uma rede maior ... deve-se cololcar os IDs existentes 1,2,3,50,517, 714,... qualquer inteiro de 1 até 1023.
+//IMPORTANTE: O ID 2047 é o ID de broadcast... ou seja ... todos os módulos da rede vão tratar/receber os dados quando o destino for o ID 2047
 int polingID=0;//usado para escolher qual ID do vetor acima será usado.
 char flag= false; //flag usada para avisar que a serial recebeu dados
 char comandos = 0;//usado para escolher qual comando enviar.
@@ -57,6 +59,8 @@ void escreve(int contador);
 char LerGPIO(int id, char gpio);
 char SetGPIO(int id, char gpio, char nivel);
 uint16_t CalculaCRC(char* data_in, uint32_t length);
+char CMD_aplicacao(int id, char cmd, String mensagem);
+char CMD_aplicacao(int id, char cmd, String mensagem);
 //================================================================================
 
 
@@ -89,22 +93,28 @@ void setup() {
 
 // the loop function runs over and over again forever
 void loop() {
-  if(count % 250 == 0)//30 : Se o contador que é incrementado no timer chegar a 30 segundos (120ms * 250=30) ... envia um comando para um escravo. o comando será RSSI, depois Leitura da porta analógica 5 e por últio
+  if(count % 250 == 0)//  30 : Se o contador que é incrementado no timer chegar a 30 segundos (120ms * 250=30) ... envia um comando para um escravo. o comando será RSSI, depois Leitura da porta analógica 5 e por últio
   {
         count++;
+        String s_msg="Radioenge_payload+_LoRaMESH";
+        char c_cmd_app = 0x10; // qualquer valor de comando acima de 0x0B e menor que 0x7F (12 a 127 decimal)
+        
         if((comandos%3) ==0)// %3 porque são 3 comandos diferente para cada EndDevice / Radio. Podem ser incluídos novos comandos. o Primeiro é a medida de nível de sinal de recepção
         {
-          LerNivelRx(listaEndDevices[polingID%5]);//%5 porque o array com IDs de EndDevices a ser percorrido só tem 5 endereços... pode-se diminuir ou aumentar ... depende do número de IDs/EndDevices existentes na rede
+          //LerNivelRx(listaEndDevices[polingID%5]);//%5 porque o array com IDs de EndDevices a ser percorrido só tem 5 endereços... pode-se diminuir ou aumentar ... depende do número de IDs/EndDevices existentes na rede
+          CMD_aplicacao(listaEndDevices[polingID%5], c_cmd_app, s_msg);
           
         }
         else if((comandos%3) == 1) // %3 porque são 3 comandos diferente para cada EndDevice / Radio. Podem ser incluídos novos comandos 
         {
-          LerGPIO(listaEndDevices[polingID%5], listaGPIO[0]);//%5 porque o array com IDs de EndDevices a ser percorrido só tem 5 endereços
+          //LerGPIO(listaEndDevices[polingID%5], listaGPIO[0]);//%5 porque o array com IDs de EndDevices a ser percorrido só tem 5 endereços
+          CMD_aplicacao(listaEndDevices[polingID%5], c_cmd_app, s_msg);
          
         }
         else if((comandos%3) == 2) //podem ser incluídos novos comandos 
         {
-         LerGPIO(listaEndDevices[polingID%5], listaGPIO[1]);//%5 porque o array com IDs de EndDevices a ser percorrido só tem 5 endereços ... se mudar o array listaEndDevices[] também mude o valor desta divisão por módulo.
+         //LerGPIO(listaEndDevices[polingID%5], listaGPIO[1]);//%5 porque o array com IDs de EndDevices a ser percorrido só tem 5 endereços ... se mudar o array listaEndDevices[] também mude o valor desta divisão por módulo.
+         CMD_aplicacao(listaEndDevices[polingID%5], c_cmd_app, s_msg);
           polingID++;//Enviou os 3 comandos diferentes para um ID... então ... vai para o próximo ID/Rádio/EndDevice
         }
         comandos++;//próximo comando
@@ -328,6 +338,37 @@ char SetGPIO(int id, char gpio, char nivel) //02 00 C2 01 07 01 00 6A 65  //02 0
   Serial.print(gpio);
   Serial.print(" Nível: ");
   Serial.println(nivel);
+  return(1);
+}
+
+//==========================================================================
+
+
+//======================  Comando de Aplicação = Envio de string  ====================
+char CMD_aplicacao(int id, char cmd, String mensagem) 
+{
+  char id_lsb = id&0xFF; //separando o ind em dois bytes para enviar no pacote; &0xFF pega somente os 8 bits menos significativos
+  char id_msb = (id>>8)&0xFF;//bitwise desloca os 8 bits mais signficativos e pega somente a parte msb do int
+  char comando = cmd; // comando referente a GPIO
+  int tamanho = mensagem.length()+1;//inclui o fim de string 0x00
+  char payload[tamanho];
+  mensagem.toCharArray(payload, tamanho);
+  char pacote[tamanho+5]; // 03 bytes do cabeçalho (id_lsb, id_msb e comando) e 2 bytes do crc
+  pacote[0] = id_lsb;
+  pacote[1] = id_msb;
+  pacote[2] = cmd;
+  int count = 0;
+  for (count=3; count<(tamanho+3); count++)
+  {
+    pacote[count] =  payload[count-3];
+  }
+  int crc = CalculaCRC(pacote, tamanho+3);
+  pacote[tamanho+3] = crc&0xFF;
+  pacote[tamanho+4]= ((crc>>8)&0xFF);
+  SWSerial.write(pacote,tamanho+5);
+  Serial.print("Envio string para o ID: ");//somente para aparecer no monitor serial do Arduino
+  Serial.print(id);
+  Serial.println(" ---  ---   ---");
   return(1);
 }
 
